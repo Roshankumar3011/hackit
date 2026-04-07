@@ -168,3 +168,128 @@ def batch_confidence_histogram(df: pd.DataFrame) -> go.Figure:
         margin=dict(t=20, b=40, l=40, r=20),
     )
     return fig
+
+
+def confusion_matrix_chart(cm: list, labels: list) -> go.Figure:
+    """
+    Annotated heatmap for the confusion matrix.
+
+    Parameters
+    ----------
+    cm     : 2-D list  [true_class][pred_class]
+    labels : list of class name strings
+    """
+    cm_arr   = [[int(v) for v in row] for row in cm]
+    row_sums = [max(sum(row), 1) for row in cm_arr]
+
+    # Normalize rows for colour intensity (0-1), keep raw counts for annotations
+    cm_norm = [
+        [round(cm_arr[r][c] / row_sums[r], 3) for c in range(len(labels))]
+        for r in range(len(labels))
+    ]
+
+    annotations = []
+    for r in range(len(labels)):
+        for c in range(len(labels)):
+            count = cm_arr[r][c]
+            pct   = cm_norm[r][c] * 100
+            annotations.append(dict(
+                x=labels[c],
+                y=labels[r],
+                text=f"<b>{count}</b><br><span style='font-size:11px'>{pct:.1f}%</span>",
+                showarrow=False,
+                font=dict(size=14, color="white"),
+            ))
+
+    fig = go.Figure(go.Heatmap(
+        z=cm_norm,
+        x=labels,
+        y=labels,
+        colorscale=[
+            [0.0, "#0d1827"],
+            [0.4, "#1e3a5f"],
+            [0.7, "#3b4dd9"],
+            [1.0, "#6366f1"],
+        ],
+        showscale=True,
+        colorbar=dict(
+            title=dict(text="Row %", font=dict(color="#94a3b8")),
+            tickfont=dict(color="#94a3b8"),
+        ),
+        zmin=0,
+        zmax=1,
+    ))
+
+    fig.update_layout(
+        paper_bgcolor="#0f172a",
+        plot_bgcolor="#0f172a",
+        font=dict(color="#e2e8f0"),
+        annotations=annotations,
+        xaxis=dict(
+            title="Predicted Label",
+            color="#94a3b8",
+            tickfont=dict(color="#cbd5e1"),
+            side="bottom",
+        ),
+        yaxis=dict(
+            title="True Label",
+            color="#94a3b8",
+            tickfont=dict(color="#cbd5e1"),
+            autorange="reversed",
+        ),
+        height=380,
+        margin=dict(t=30, b=60, l=100, r=40),
+    )
+    return fig
+
+
+def per_class_metrics_chart(per_class: dict) -> go.Figure:
+    """
+    Grouped bar chart: Precision / Recall / F1 per class.
+
+    Parameters
+    ----------
+    per_class : dict  label -> {precision, recall, f1-score, support}
+    """
+    labels    = list(per_class.keys())
+    precision = [round(per_class[l]["precision"] * 100, 1) for l in labels]
+    recall    = [round(per_class[l]["recall"]    * 100, 1) for l in labels]
+    f1        = [round(per_class[l]["f1-score"]  * 100, 1) for l in labels]
+
+    fig = go.Figure()
+    for metric, values, color in [
+        ("Precision", precision, "#6366f1"),
+        ("Recall",    recall,    "#22c55e"),
+        ("F1-Score",  f1,        "#f59e0b"),
+    ]:
+        fig.add_trace(go.Bar(
+            name=metric,
+            x=labels,
+            y=values,
+            marker_color=color,
+            text=[f"{v:.1f}%" for v in values],
+            textposition="outside",
+            textfont=dict(color="#e2e8f0", size=11),
+        ))
+
+    fig.update_layout(
+        barmode="group",
+        paper_bgcolor="#0f172a",
+        plot_bgcolor="#0f172a",
+        font=dict(color="#e2e8f0"),
+        yaxis=dict(
+            range=[0, 120],
+            title="Score (%)",
+            gridcolor="#1e293b",
+            color="#94a3b8",
+        ),
+        xaxis=dict(color="#cbd5e1"),
+        legend=dict(
+            orientation="h",
+            y=-0.25,
+            font=dict(color="#e2e8f0"),
+        ),
+        height=360,
+        margin=dict(t=20, b=70, l=50, r=20),
+    )
+    return fig

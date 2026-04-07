@@ -18,6 +18,7 @@ from utils.prediction import (
     predict_single,
     predict_batch,
     get_feature_importances,
+    get_model_metrics,
     FEATURE_COLS,
     COLOR_MAP,
     ICON_MAP,
@@ -28,6 +29,8 @@ from utils.visualizations import (
     feature_importance_chart,
     batch_risk_pie,
     batch_confidence_histogram,
+    confusion_matrix_chart,
+    per_class_metrics_chart,
 )
 
 # ── page config ────────────────────────────────────────────────────────────────
@@ -194,7 +197,7 @@ with st.sidebar:
     st.markdown("**Navigation**")
     page = st.radio(
         label="Go to",
-        options=["🔍 Live Prediction", "📂 Batch Analysis", "📊 Model Insights"],
+        options=["🔍 Live Prediction", "📂 Batch Analysis", "📊 Model Insights", "📈 Model Performance"],
         label_visibility="collapsed",
     )
     st.markdown("---")
@@ -559,6 +562,124 @@ elif "📊 Model Insights" in page:
 
     except Exception as e:
         st.error(f"❌ Could not load model insights: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: MODEL PERFORMANCE
+# ══════════════════════════════════════════════════════════════════════════════
+elif "📈 Model Performance" in page:
+    st.markdown("<div class='section-header'>📈 Model Performance Metrics</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<p style='color:#64748b;font-size:0.88rem;margin-top:-0.5rem;margin-bottom:1.2rem;'>"
+        "Evaluated on the held-out 20% test split (same split used during training, random_state=42). "
+        "No data snooping — the model was never trained on these samples.</p>",
+        unsafe_allow_html=True,
+    )
+
+    with st.spinner("⚙️ Computing metrics from test set ..."):
+        try:
+            metrics = get_model_metrics()
+        except Exception as e:
+            st.error(f"❌ Could not compute metrics: {e}")
+            st.stop()
+
+    # ── top-level metric cards ──────────────────────────────────────────────
+    m1, m2, m3, m4 = st.columns(4)
+    for col, (icon, label, val, color) in zip(
+        [m1, m2, m3, m4],
+        [
+            ("🎯", "Accuracy",  metrics["accuracy"]  * 100, "#6366f1"),
+            ("🔬", "Precision", metrics["precision"] * 100, "#22c55e"),
+            ("📡", "Recall",    metrics["recall"]    * 100, "#f59e0b"),
+            ("⚖️", "F1-Score",  metrics["f1"]        * 100, "#ec4899"),
+        ],
+    ):
+        with col:
+            st.markdown(f"""
+            <div class="metric-card" style="border-color:{color}44;">
+                <div style="font-size:1.8rem;">{icon}</div>
+                <div class="metric-value" style="color:{color};">{val:.1f}%</div>
+                <div class="metric-label">{label} (macro)</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("---")
+
+    # ── two-column layout: confusion matrix + per-class chart ───────────────
+    tab_cm, tab_pc, tab_tbl = st.tabs(
+        ["🔲 Confusion Matrix", "📊 Per-Class Metrics", "📋 Detailed Report"]
+    )
+
+    with tab_cm:
+        st.markdown(
+            "<p style='color:#64748b;font-size:0.85rem;margin-bottom:0.5rem;'>"
+            "Rows = True class, Columns = Predicted class. Cell colour intensity shows row-normalised rate."
+            "</p>", unsafe_allow_html=True
+        )
+        st.plotly_chart(
+            confusion_matrix_chart(metrics["conf_matrix"], metrics["labels"]),
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
+
+    with tab_pc:
+        st.markdown(
+            "<p style='color:#64748b;font-size:0.85rem;margin-bottom:0.5rem;'>"
+            "Per-class Precision, Recall and F1-Score for each burnout risk category."
+            "</p>", unsafe_allow_html=True
+        )
+        st.plotly_chart(
+            per_class_metrics_chart(metrics["per_class"]),
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
+
+    with tab_tbl:
+        st.markdown("<div class='section-header'>📋 Full Classification Report</div>", unsafe_allow_html=True)
+        rows = []
+        for lbl, vals in metrics["per_class"].items():
+            rows.append({
+                "Risk Class":  lbl,
+                "Precision":   f"{vals['precision']*100:.1f}%",
+                "Recall":      f"{vals['recall']*100:.1f}%",
+                "F1-Score":    f"{vals['f1-score']*100:.1f}%",
+                "Support":     int(vals['support']),
+            })
+        import pandas as _pd
+        report_df = _pd.DataFrame(rows)
+
+        def color_report(row):
+            label = row["Risk Class"]
+            colors = {"Low Risk": "rgba(34,197,94,0.10)", "Medium Risk": "rgba(245,158,11,0.10)", "High Risk": "rgba(239,68,68,0.10)"}
+            bg = colors.get(label, "")
+            return [f"background-color:{bg}" if bg else ""] * len(row)
+
+        st.dataframe(
+            report_df.style.apply(color_report, axis=1),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        # Summary aggregate row
+        agg1, agg2, agg3, agg4 = st.columns(4)
+        for col, (lbl, val, color) in zip(
+            [agg1, agg2, agg3, agg4],
+            [
+                ("Overall Accuracy",  f"{metrics['accuracy']*100:.2f}%",  "#6366f1"),
+                ("Macro Precision",   f"{metrics['precision']*100:.2f}%", "#22c55e"),
+                ("Macro Recall",      f"{metrics['recall']*100:.2f}%",    "#f59e0b"),
+                ("Macro F1",          f"{metrics['f1']*100:.2f}%",        "#ec4899"),
+            ],
+        ):
+            with col:
+                st.markdown(f"""
+                <div class="metric-card" style="border-color:{color}44;">
+                    <div class="metric-value" style="color:{color};font-size:1.5rem;">{val}</div>
+                    <div class="metric-label">{lbl}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
 
 # ── footer ─────────────────────────────────────────────────────────────────────

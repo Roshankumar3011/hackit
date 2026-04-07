@@ -127,3 +127,85 @@ def predict_batch(df: pd.DataFrame) -> pd.DataFrame:
 def get_feature_importances() -> pd.Series:
     clf, _ = load_model()
     return pd.Series(clf.feature_importances_, index=FEATURE_COLS).sort_values(ascending=True)
+
+
+def get_model_metrics() -> dict:
+    """
+    Evaluate the saved model on the held-out test split.
+
+    Replays the exact same train/test split used during training
+    (test_size=0.20, random_state=42, stratify=y) so no retraining is needed.
+
+    Returns
+    -------
+    dict with keys:
+        accuracy   : float
+        precision  : float  (macro)
+        recall     : float  (macro)
+        f1         : float  (macro)
+        per_class  : dict   label -> {precision, recall, f1, support}
+        conf_matrix: 2-D list (rows = true, cols = predicted)
+        labels     : list of class label strings
+    """
+    import os, sys
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import (
+        accuracy_score,
+        precision_score,
+        recall_score,
+        f1_score,
+        confusion_matrix,
+        classification_report,
+    )
+
+    ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    DATA_PATH = os.path.join(ROOT_DIR, "data", "student_data.csv")
+
+    # ── generate data if absent ────────────────────────────────────────────────
+    if not os.path.exists(DATA_PATH):
+        sys.path.insert(0, os.path.join(ROOT_DIR, "data"))
+        from synthetic_data import generate_dataset  # type: ignore
+        os.makedirs(os.path.join(ROOT_DIR, "data"), exist_ok=True)
+        df = generate_dataset()
+        df.to_csv(DATA_PATH, index=False)
+    else:
+        df = pd.read_csv(DATA_PATH)
+
+    X = df[FEATURE_COLS].values
+    y = df["burnout_risk"].values
+
+    _, X_test, _, y_test = train_test_split(
+        X, y, test_size=0.20, random_state=42, stratify=y
+    )
+
+    clf, scaler = load_model()
+    X_test_s = scaler.transform(X_test)
+    y_pred = clf.predict(X_test_s)
+
+    labels_order = [0, 1, 2]
+    label_names = [LABEL_MAP[k] for k in labels_order]
+
+    acc   = float(accuracy_score(y_test, y_pred))
+    prec  = float(precision_score(y_test, y_pred, average="macro", zero_division=0))
+    rec   = float(recall_score(y_test, y_pred, average="macro", zero_division=0))
+    f1    = float(f1_score(y_test, y_pred, average="macro", zero_division=0))
+    cm    = confusion_matrix(y_test, y_pred, labels=labels_order).tolist()
+
+    report = classification_report(
+        y_test, y_pred,
+        labels=labels_order,
+        target_names=label_names,
+        output_dict=True,
+        zero_division=0,
+    )
+    per_class = {name: report[name] for name in label_names}
+
+    return {
+        "accuracy":   acc,
+        "precision":  prec,
+        "recall":     rec,
+        "f1":         f1,
+        "per_class":  per_class,
+        "conf_matrix": cm,
+        "labels":     label_names,
+    }
